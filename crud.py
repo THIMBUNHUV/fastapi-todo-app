@@ -12,8 +12,7 @@ def create_todo(db: Session, todo: TodoCreate):
     db_todo = Todo(
         title=todo.title,
         description=todo.description,
-        completed=todo.completed,
-        image_url=todo.image_url
+        completed=todo.completed
     )
     db.add(db_todo)
     db.commit()
