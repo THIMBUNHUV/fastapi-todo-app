@@ -32,6 +32,6 @@ def update_todo(db: Session, todo_id: int, todo: TodoUpdate):
 def delete_todo(db: Session, todo_id: int):
     db_todo = get_todo(db, todo_id)
     if db_todo:
-        db.delete(db_todo)
+        db.delete(db_todo)  
         db.commit()
     return db_todo
