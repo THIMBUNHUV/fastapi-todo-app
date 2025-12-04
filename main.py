@@ -13,11 +13,11 @@ from model import Base
 from schemas import Todo, TodoCreate, TodoUpdate
 from crud import get_todo, get_todos, create_todo, update_todo, delete_todo
 
-# Configure Cloudinary - REMOVE SECRETS BEFORE COMMITTING TO GITHUB!
+# Configure Cloudinary
 cloudinary.config(
     cloud_name="dyo4kbiuq",
     api_key="932226137629113",
-    api_secret="LyEC0SVKiDjy8Zj7-ncUd7eCHNk",  # ⚠️ KEEP THIS SECRET!
+    api_secret="LyEC0SVKiDjy8Zj7-ncUd7eCHNk",
     secure=True
 )
 
@@ -35,7 +35,7 @@ app = FastAPI(
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # For development, restrict in production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -54,7 +54,7 @@ def upload_to_cloudinary(file: UploadFile, todo_id: int) -> str:
             folder="todo_app",
             public_id=public_id,
             overwrite=True,
-            resource_type="auto"  # Auto-detect image/video
+            resource_type="auto"
         )
         
         print(f"✅ Image uploaded to Cloudinary: {upload_result['secure_url']}")
@@ -67,32 +67,11 @@ def upload_to_cloudinary(file: UploadFile, todo_id: int) -> str:
             detail=f"Failed to upload image: {str(e)}"
         )
 
-def delete_from_cloudinary(image_url: str):
-    """Delete image from Cloudinary"""
-    try:
-        if image_url and "cloudinary.com" in image_url:
-            # Extract public_id from Cloudinary URL
-            # URL format: https://res.cloudinary.com/cloud_name/image/upload/v1234567/public_id.jpg
-            parts = image_url.split('/')
-            filename_with_ext = parts[-1]
-            filename = filename_with_ext.split('.')[0]
-            public_id = f"todo_app/{filename}"
-            
-            # Delete from Cloudinary
-            result = cloudinary.uploader.destroy(public_id)
-            print(f"🗑️ Deleted from Cloudinary: {public_id}, result: {result}")
-            
-    except Exception as e:
-        print(f"⚠️ Failed to delete from Cloudinary: {e}")
-
 @app.get("/")
 def read_root():
-    return {
-        "message": "Welcome to Todo API with Cloudinary",
-        "version": "3.0.0",
-        "docs": "/docs"
-    }
+    return {"message": "Welcome to Todo API with Cloudinary"}
 
+# POST endpoint with Cloudinary
 @app.post("/todos/", response_model=Todo, status_code=status.HTTP_201_CREATED)
 async def create_new_todo(
     title: str = Form(...),
@@ -101,7 +80,7 @@ async def create_new_todo(
     image: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db)
 ):
-    """Create new todo with optional Cloudinary image upload"""
+    """Create new todo with Cloudinary image upload"""
     print(f"📝 Creating todo: {title}")
     
     # Create todo data
@@ -135,10 +114,11 @@ async def create_new_todo(
             raise
         except Exception as e:
             print(f"⚠️ Image upload failed but todo created: {e}")
-            # Continue without image - todo is already created
+            # Continue without image
     
     return db_todo
 
+# PUT endpoint with Cloudinary
 @app.put("/todos/{todo_id}", response_model=Todo)
 async def update_existing_todo(
     todo_id: int,
@@ -148,13 +128,9 @@ async def update_existing_todo(
     image: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db)
 ):
-    """Update todo with optional Cloudinary image upload"""
+    """Update todo with Cloudinary image upload"""
     print(f"📝 Updating todo {todo_id}")
-    
-    # Get existing todo to check for old image
-    existing_todo = get_todo(db, todo_id)
-    if existing_todo is None:
-        raise HTTPException(status_code=404, detail="Todo not found")
+    print(f"📝 Data received - title: {title}, completed: {completed}")
     
     # Build update data
     update_data = {}
@@ -163,11 +139,22 @@ async def update_existing_todo(
     if description is not None:
         update_data["description"] = description
     if completed is not None:
+        # Handle string "true"/"false" conversion
+        if isinstance(completed, str):
+            completed = completed.lower() == "true"
         update_data["completed"] = completed
+        print(f"✅ Will update completed to: {completed}")
+    
+    print(f"📝 Final update data: {update_data}")
     
     # Update todo in database
     todo_update = TodoUpdate(**update_data)
     db_todo = update_todo(db, todo_id=todo_id, todo=todo_update)
+    
+    if db_todo is None:
+        raise HTTPException(status_code=404, detail="Todo not found")
+    
+    print(f"✅ Database update successful. Todo completed: {db_todo.completed}")
     
     # Handle image upload to Cloudinary
     if image and image.filename:
@@ -176,14 +163,10 @@ async def update_existing_todo(
             if not image.content_type or not image.content_type.startswith('image/'):
                 raise HTTPException(status_code=400, detail="File must be an image")
             
-            # Delete old image from Cloudinary if exists
-            if db_todo.image_url:
-                delete_from_cloudinary(db_todo.image_url)
-            
-            # Upload new image to Cloudinary
+            # Upload to Cloudinary
             image_url = upload_to_cloudinary(image, db_todo.id)
             
-            # Update todo with new image URL
+            # Update todo with image URL
             db_todo.image_url = image_url
             db.commit()
             db.refresh(db_todo)
@@ -194,46 +177,17 @@ async def update_existing_todo(
             raise
         except Exception as e:
             print(f"⚠️ Image update failed: {e}")
-            # Continue without updating image
     
     return db_todo
 
-@app.patch("/todos/{todo_id}/toggle", response_model=Todo)
-async def toggle_todo_completion(
-    todo_id: int,
-    db: Session = Depends(get_db)
-):
-    """Toggle todo completion status"""
-    db_todo = get_todo(db, todo_id)
-    if db_todo is None:
-        raise HTTPException(status_code=404, detail="Todo not found")
-    
-    # Toggle completion status
-    db_todo.completed = not db_todo.completed
-    db.commit()
-    db.refresh(db_todo)
-    
-    return db_todo
-
+# Keep other endpoints
 @app.get("/todos/", response_model=List[Todo])
-def read_todos(
-    skip: int = 0, 
-    limit: int = 100, 
-    completed: Optional[bool] = None,
-    db: Session = Depends(get_db)
-):
-    """Get todos with optional filtering"""
+def read_todos(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
     todos = get_todos(db, skip=skip, limit=limit)
-    
-    # Filter by completion status if provided
-    if completed is not None:
-        todos = [todo for todo in todos if todo.completed == completed]
-    
     return todos
 
 @app.get("/todos/{todo_id}", response_model=Todo)
 def read_todo(todo_id: int, db: Session = Depends(get_db)):
-    """Get single todo by ID"""
     db_todo = get_todo(db, todo_id=todo_id)
     if db_todo is None:
         raise HTTPException(status_code=404, detail="Todo not found")
@@ -241,32 +195,19 @@ def read_todo(todo_id: int, db: Session = Depends(get_db)):
 
 @app.delete("/todos/{todo_id}")
 def delete_existing_todo(todo_id: int, db: Session = Depends(get_db)):
-    """Delete todo and its image from Cloudinary"""
     db_todo = delete_todo(db, todo_id=todo_id)
     if db_todo is None:
         raise HTTPException(status_code=404, detail="Todo not found")
-    
-    # Delete associated image from Cloudinary if exists
-    if db_todo.image_url:
-        delete_from_cloudinary(db_todo.image_url)
-    
     return {"message": "Todo deleted successfully"}
 
 @app.get("/health")
 def health_check():
-    """Health check endpoint"""
-    return {
-        "status": "healthy",
-        "service": "Todo API",
-        "timestamp": datetime.now().isoformat(),
-        "image_service": "Cloudinary"
-    }
+    return {"status": "healthy", "message": "Todo API with Cloudinary is running"}
 
 @app.get("/cloudinary/test")
 def test_cloudinary():
     """Test Cloudinary connection"""
     try:
-        # Simple test to check Cloudinary connection
         result = cloudinary.api.ping()
         return {
             "status": "connected",
